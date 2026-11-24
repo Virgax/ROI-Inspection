@@ -1,0 +1,7 @@
+# Para correr las pruebas (en CI y en local). Mismas versiones que el runtime,
+# pero OpenCV sin GUI, que es lo que hay en un servidor sin pantalla.
+PySide6==6.10.3
+zxing-cpp==2.3.0
+numpy==2.0.2
+opencv-python-headless<5
+pytest
