@@ -1,0 +1,48 @@
+# --- Credenciales: NUNCA en el repositorio (viven en ~/.roi/, permisos 600) ---
+conexion.json
+admin.json
+github.json
+*.pem
+*.key
+clave_privada*
+*_ed25519*
+.env
+.env.*
+
+# --- Datos de cada estacion: no son codigo (viven en ~/Documents/ROI) ---
+procesos/
+datos/
+banco/
+evidencia/
+inspecciones_log*.csv
+*.log
+*.npz
+referencia.png
+config_rois.json
+umbrales.json
+capturas/
+dataset/
+
+# --- Modelos y pesos (pesan; van en el runtime, no en git) ---
+*.pt
+*.onnx
+
+# --- Construccion ---
+dist/
+build/
+*.spec
+*.app/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+.pytest_cache/
+
+# --- Respaldos manuales ---
+BACKUP/
+ROI_respaldo_*/
+
+# --- Sistema ---
+.DS_Store

@@ -1,0 +1,143 @@
+INSPECCION ROI — instalacion en Mac mini (Intel)
+=================================================
+
+QUE HAY AQUI
+  app/          el programa y, dentro de app/motor/, el codigo de inspeccion
+  datos/        la receta ya calibrada (Ensamble 2), para importar
+
+NO viene la configuracion de SQL: esa lleva credenciales y no viaja en
+carpetas que se copian. Se crea en cada Mac (paso 5).
+
+
+
+====================================================================
+LA VIA CORTA: UN SOLO COMANDO
+====================================================================
+
+Copia esta carpeta al Escritorio, abre Terminal y pega:
+
+    bash ~/Desktop/PARA_MAC_MINI/app/instalar.sh
+
+Eso hace el entorno, instala los paquetes con las versiones que le
+tocan a este Python, construye la aplicacion y le pone el permiso de
+camara. Lo unico que pregunta es la conexion a SQL, porque lleva
+credenciales y no puede venir escrita aqui.
+
+Se puede repetir las veces que haga falta: lo que ya este hecho lo
+detecta y sigue.
+
+Si algo falla, se detiene y lo dice. Pega la salida en el chat.
+
+Lo de abajo son los mismos pasos a mano, por si hace falta mirar uno
+suelto.
+
+
+--------------------------------------------------------------------
+1) DEJAR LA CARPETA EN SU SITIO
+
+   Copia PARA_MAC_MINI completa al Escritorio de la Mac mini.
+
+
+--------------------------------------------------------------------
+2) ENTORNO (solo la primera vez, en cada Mac mini)
+
+   python3 -m venv ~/roi-venv
+   source ~/roi-venv/bin/activate
+   python -m pip install --upgrade pip
+   pip install --no-compile "PySide6==6.10.3"
+   pip install --no-compile "zxing-cpp==2.3.0"
+   pip install --no-compile "numpy==2.0.2" "opencv-python<5" pymssql pyinstaller
+
+   Comprobar:
+   python -c "import PySide6, cv2, numpy, zxingcpp, pymssql"
+
+   Las versiones van clavadas porque estas Macs traen Python 3.9:
+   PySide6 6.11 pide 3.10 y zxing-cpp 3.1 pide 3.12. Con las nuevas, pip
+   intenta compilar desde fuente y no termina.
+
+   --no-compile esquiva un fallo de pip con un archivo de plantilla que
+   PySide6 trae dentro y que no es Python valido.
+
+
+--------------------------------------------------------------------
+3) CONEXION A SQL — ANTES de probar el cierre
+
+   source ~/roi-venv/bin/activate
+   cd ~/Desktop/PARA_MAC_MINI/app/motor
+   python roi_db.py --crear-config
+   python roi_db.py --probar
+
+   Guarda en ~/.roi/conexion.json con permisos 600, fuera de esta
+   carpeta: lleva credenciales y no viaja en algo que se copia.
+
+   Sin esto el inspector funciona igual, pero el CIERRE DE UNIDAD queda
+   apagado: veras PASA y nada mas, sin pedir el giftcard ni el display.
+
+
+--------------------------------------------------------------------
+4) PROBARLO SIN EMPAQUETAR (recomendado antes de construir)
+
+   source ~/roi-venv/bin/activate
+   cd ~/Desktop/PARA_MAC_MINI/datos
+   python ../app/roi_app.py
+
+   Arranca con la receta Ensamble 2 ya cargada. Si la camara USB no es la
+   0, cambia el numero en la barra de arriba.
+
+   PARA QUE FUNCIONE EL CIERRE hay que MARCAR LA CASILLA
+   "Cierre de unidad" ANTES de pulsar Iniciar. Sin marcarla, el programa
+   solo inspecciona tornillos: dice PASA y ya.
+
+   Si la marcas y el cierre no puede arrancar, sale en pantalla el
+   motivo (normalmente, que falta el paso 3).
+
+
+--------------------------------------------------------------------
+5) CONSTRUIR LA APLICACION
+
+   source ~/roi-venv/bin/activate
+   cd ~/Desktop/PARA_MAC_MINI/app
+   python empaquetar.py
+
+   Deja app/dist/Inspeccion ROI.app
+   Al final dice la arquitectura del binario: debe poner x86_64.
+
+   Ese .app corre en las dos Mac mini Y en la MacBook M1 por Rosetta.
+   (Al reves no: lo construido en M1 no abre en Intel.)
+
+   Para la segunda Mac mini basta copiar el .app: no hace falta ni
+   Python ni el venv alli.
+
+   Primera vez que se abre en cada Mac:
+     clic derecho sobre la app > Abrir > Abrir
+   Con doble clic normal macOS la bloquea sin dar opcion, porque no esta
+   firmada.
+
+   La primera vez que pulses Iniciar, macOS pedira permiso de camara
+   para la aplicacion. Es un permiso distinto del que ya tiene Terminal:
+   hay que concederlo una vez por Mac.
+
+
+--------------------------------------------------------------------
+6) LAS RECETAS, UNA VEZ EMPAQUETADO
+
+   La app instalada guarda sus datos en ~/Documents/ROI (fuera del
+   paquete, para que actualizar no borre las calibraciones).
+
+   Al abrirla la primera vez dira "Sin procesos". Pulsa
+   "Importar recetas..." y apunta a:
+
+       ~/Desktop/PARA_MAC_MINI/datos
+
+   Trae la receta entera: posiciones, plantillas, umbrales y referencia.
+   Nunca sobrescribe una receta que ya exista alli.
+
+
+--------------------------------------------------------------------
+ADMINISTRACION
+
+   Boton "Administracion..." > usuario admin.
+   Desde ahi se crean recetas, se capturan referencias, se marcan las
+   posiciones y se calibra, sin terminal.
+
+   Cambia la clave desde ese mismo panel en cuanto lo pruebes.
