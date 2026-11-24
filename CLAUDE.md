@@ -11,6 +11,18 @@ SQL Server local de planta. Documento completo: `docs/HANDOFF_CLAUDE_CODE.md`.
   **Una sola copia.** `app/motor.py` la localiza (carpeta hermana de `app/`).
 - `sql/` — scripts para Jaime. `sql/obsoleto/` no se ejecuta.
 - `docs/` — handoff, esquema verificado, instalación.
+- `tests/` — pytest. Fijan las decisiones de abajo. Si una falla tras un cambio,
+  leer el comentario del código que protege antes de tocar la prueba.
+
+## Pruebas
+
+```bash
+pip install --no-compile -r requirements-dev.txt
+QT_QPA_PLATFORM=offscreen python -m pytest
+```
+
+CI (`.github/workflows/pruebas.yml`) las corre con Python 3.9 y las versiones
+clavadas. Qt en Linux sin pantalla necesita `libegl1 libgl1 libxkbcommon0`.
 
 Recetas, logs y banco viven en `~/Documents/ROI`; credenciales en `~/.roi/` (600).
 Nada de eso entra al repo.
@@ -61,6 +73,12 @@ Runtime (`.app`) casi fijo + carga (`app/*.py`, `motor/*.py`) descargada de GitH
 Releases. Manifiesto firmado Ed25519; **la clave privada nunca en GitHub** (ni repo
 ni secretos de Actions). Se aplica al reiniciar, nunca a mitad de un cierre.
 Vuelta atrás automática si el arranque falla.
+
+## Votación
+
+La votación temporal vive **solo** en `motor/veredicto.py`. `inspector.modo_vivo`
+y `app/roi_app.py` usan la misma clase `Veredicto`. No reintroducir una copia:
+la divergencia ya rompió el cierre una vez (`tests/test_inspector_vivo.py` lo vigila).
 
 ## Convenciones
 

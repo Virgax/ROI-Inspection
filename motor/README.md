@@ -264,8 +264,12 @@ Restaurar = borrar/renombrar la activa y duplicar el respaldo como ROI.
 | `FRAMES_VOTO` | 15 | Ventana de votación temporal |
 | `VOTOS_PRESENTE` | 8 | Mayoría para declarar presente |
 | `FRAMES_ESTABLE` | 10 | Frames idénticos para estabilidad |
+| `FRAMES_ESTABLE_CAMBIO` | 45 | Frames para registrar un veredicto distinto sobre la misma pieza |
 | `LADO_MAX_CANONICO` | 3200 | Lado mayor del lienzo rectificado (soporta 4K) |
 | `FRAMES_SIN_MARCADOR_RESET` | 30 | Frames sin marcadores para resetear sesión |
+
+Los cuatro de votación se definen **solo** en `veredicto.py`; `inspector.py` los
+re-exporta. El modo terminal y la app Qt usan la misma clase `veredicto.Veredicto`.
 
 ---
 
@@ -299,7 +303,7 @@ Restaurar = borrar/renombrar la activa y duplicar el respaldo como ROI.
   veredicto, así que una posición que oscilaba entre `falta` y `dudoso` hacía que
   la MISMA pieza se registrara indefinidamente: el 8-sep hay 2403 filas que
   contienen solo 14 veredictos distintos. Ahora una pieza se registra una vez por
-  veredicto distinto (`veredictos_registrados`), y un veredicto nuevo sobre la
+  veredicto distinto (`Veredicto.registrados` en `veredicto.py`), y un veredicto nuevo sobre la
   misma pieza exige `FRAMES_ESTABLE_CAMBIO` = 45 frames.
 - **Log con cuatro formatos bajo una cabecera de seis columnas.** Normalizado con
   `migrar_log.py`; cabecera y filas salen ahora de una sola lista `CAMPOS_LOG`.

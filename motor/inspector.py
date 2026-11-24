@@ -34,7 +34,6 @@ import platform
 import subprocess
 import sys
 import time
-from collections import deque
 from datetime import datetime
 
 import cv2
@@ -52,6 +51,12 @@ import cierre
 # Banco de evidencia: guarda cada pieza registrada para que un jurado externo
 # decida despues que entra a la calibracion. No juzga ni altera el veredicto.
 import banco
+# Votacion temporal, estabilidad y decision de registro. Vive en su propio
+# modulo y SOLO alli: este archivo tuvo su propia copia de la misma logica, la
+# aplicacion Qt usaba la de veredicto.py, y esa divergencia ya rompio el cierre
+# una vez. Dos implementaciones de lo mismo acaban juzgando distinto segun por
+# donde se lance el programa.
+import veredicto
 
 # registro de las decisiones tomadas por el Juez 2 en la ultima clasificacion:
 # {rid: (estado, correlacion, puntaje)} con estado "rescatado" o "sin_cruz".
@@ -79,16 +84,22 @@ IDS_ESQUINAS = [0, 1, 2, 3]        # 0=sup-izq 1=sup-der 2=inf-izq 3=inf-der
 LADO_MAX_CANONICO = 3200           # lado mayor de la imagen rectificada
 VENTANA = "Inspector Airlink"
 
-FRAMES_VOTO = 15                   # tamaño de la ventana de votación
-VOTOS_PRESENTE = 8                 # mayoría para declarar presente
-FRAMES_ESTABLE = 10                # frames con veredicto idéntico => estable
-# Frames que debe sostener un veredicto NUEVO para registrarse cuando la pieza ya
-# tiene un registro. Es mas exigente que FRAMES_ESTABLE a proposito: el primer
-# veredicto de una pieza puede declararse rapido, pero un SEGUNDO registro sobre
-# la misma pieza solo se justifica si el operario la corrigio de verdad, y una
-# correccion real se sostiene. Con 45 frames (~3 s) una posicion que oscila entre
-# 'falta' y 'dudoso' nunca alcanza el listo, y una correccion si.
-FRAMES_ESTABLE_CAMBIO = 45
+# Parametros de la votacion. Se definen en veredicto.py y aqui solo se
+# re-exportan, para que quien los lea desde este modulo vea los mismos valores
+# que usa la decision de verdad. NO volver a darles valor aqui: dos sitios con
+# el mismo numero son dos sitios que un dia dejan de coincidir.
+#
+# FRAMES_ESTABLE_CAMBIO: frames que debe sostener un veredicto NUEVO para
+# registrarse cuando la pieza ya tiene un registro. Es mas exigente que
+# FRAMES_ESTABLE a proposito: el primer veredicto de una pieza puede declararse
+# rapido, pero un SEGUNDO registro sobre la misma pieza solo se justifica si el
+# operario la corrigio de verdad, y una correccion real se sostiene. Con 45
+# frames (~3 s) una posicion que oscila entre 'falta' y 'dudoso' nunca alcanza
+# el listo, y una correccion si.
+FRAMES_VOTO = veredicto.FRAMES_VOTO
+VOTOS_PRESENTE = veredicto.VOTOS_PRESENTE
+FRAMES_ESTABLE = veredicto.FRAMES_ESTABLE
+FRAMES_ESTABLE_CAMBIO = veredicto.FRAMES_ESTABLE_CAMBIO
 FRAMES_SIN_MARCADOR_RESET = 30
 
 DIR_RECETAS = "procesos"
@@ -1538,27 +1549,16 @@ def modo_vivo(args):
     # pieza salio.
     _cont_pieza_activa = False
 
-    votos = {clave(p): deque(maxlen=FRAMES_VOTO) for p in cfg["puntos"]}
-    # historial numerico de la misma ventana: (puntaje, similitud) por frame. Se usa
-    # para registrar en el log la MEDIANA de la ventana en vez del ultimo frame, que
-    # puede contradecir al veredicto votado.
-    hist_num = {clave(p): deque(maxlen=FRAMES_VOTO) for p in cfg["puntos"]}
-    historial_veredicto = deque(maxlen=FRAMES_ESTABLE_CAMBIO)
-    # posiciones que el Juez 2 rescato durante la pieza actual: {clave: (estado, cz, puntaje)}
-    rescates_pieza = {}
-    # Veredictos ya registrados para la pieza que hay ahora en el fixture. Es un
-    # conjunto y no un booleano porque una pieza puede registrarse legitimamente
-    # mas de una vez (el operario coloca el tornillo que faltaba y el veredicto
-    # cambia), pero NUNCA dos veces con el mismo veredicto.
+    # Toda la votacion -ventana, estabilidad en dos niveles, "una vez por
+    # veredicto y por pieza"- vive en veredicto.Veredicto, la MISMA clase que
+    # usa la aplicacion Qt. Ver el docstring de veredicto.py para el porque de
+    # cada regla; en especial el re-armado por parpadeo: el 8-sep-2026 se
+    # registraron 2403 filas que solo contenian 14 veredictos distintos.
     #
-    # Antes era un booleano que se re-armaba en cuanto el veredicto dejaba de ser
-    # uniforme. Cualquier posicion que oscilara entre 'falta' y 'dudoso' bastaba
-    # para re-armarlo, asi que una escena inestable escribia una fila cada pocos
-    # segundos indefinidamente: el 8-sep-2026 se registraron 2403 filas que solo
-    # conten1an 14 veredictos distintos. El log dejaba de contar piezas y pasaba a
-    # contar parpadeos, y con el se falseaban las tasas de PASA y los percentiles
-    # con los que se pensaba fijar el piso de similitud.
-    veredictos_registrados = set()
+    # `ver.hist` es el historial numerico de la ventana (puntaje, similitud), que
+    # el log usa para registrar la MEDIANA y no el ultimo frame. `ver.rescates`
+    # son las posiciones que el Juez 2 rescato durante la pieza actual.
+    ver = veredicto.Veredicto([clave(p) for p in cfg["puntos"]])
     frames_sin_marcadores = 0
     debug = False
 
@@ -1572,13 +1572,7 @@ def modo_vivo(args):
         if warped is None:
             frames_sin_marcadores += 1
             if frames_sin_marcadores > FRAMES_SIN_MARCADOR_RESET:
-                for d in votos.values():
-                    d.clear()
-                for d in hist_num.values():
-                    d.clear()
-                historial_veredicto.clear()
-                rescates_pieza.clear()
-                veredictos_registrados.clear()
+                ver.reiniciar()
                 detector_cont.reset()
                 pieza_id += 1
                 _cont_pieza_activa = False
@@ -1589,65 +1583,23 @@ def modo_vivo(args):
             cv2.imshow(VENTANA, vista)
         else:
             frames_sin_marcadores = 0
-            for rid, pres in presencia_frame.items():
-                votos[rid].append(pres)
-                if rid in hist_num:
-                    hist_num[rid].append((scores.get(rid, 0.0),
-                                          (sims or {}).get(rid)))
+            r = ver.observar(presencia_frame, scores, sims)
+            presencia = r["presencia"]
+            listo = r["listo"]
+            faltantes, dudosos = r["faltantes"], r["dudosos"]
+            n_pres = r["n_presentes"]
+            estable = r["estable"]
 
-            # decisión por votación (None mientras la ventana no está llena).
-            # Con tres estados posibles (True/False/"dudoso") se toma la mayoria.
-            presencia = {}
-            for rid, d in votos.items():
-                if len(d) < FRAMES_VOTO:
-                    presencia[rid] = None
-                    continue
-                n_true = sum(1 for v in d if v is True)
-                n_dud = sum(1 for v in d if v == "dudoso")
-                n_false = sum(1 for v in d if v is False)
-                # presente requiere mayoria clara; si no, gana el mayor entre falta/dudoso
-                if n_true >= VOTOS_PRESENTE:
-                    presencia[rid] = True
-                elif n_dud >= n_false:
-                    presencia[rid] = "dudoso" if n_dud > 0 else False
-                else:
-                    presencia[rid] = False
-
-            listo = all(v is not None for v in presencia.values())
-            faltantes = tuple(sorted(r for r, v in presencia.items() if v is False))
-            dudosos = tuple(sorted(r for r, v in presencia.items() if v == "dudoso"))
-            n_pres = sum(1 for v in presencia.values() if v is True)
-
-            if listo:
-                historial_veredicto.append((faltantes, dudosos))
-            _ult = list(historial_veredicto)
-            # dos niveles de estabilidad sobre la MISMA ventana: el corto decide el
-            # primer registro de la pieza (y el color del banner), el largo exige
-            # que un veredicto distinto se sostenga antes de registrarse encima.
-            estable = (listo and len(_ult) >= FRAMES_ESTABLE
-                       and len(set(_ult[-FRAMES_ESTABLE:])) == 1)
-            estable_cambio = (listo and len(_ult) == FRAMES_ESTABLE_CAMBIO
-                              and len(set(_ult)) == 1)
-
-            # Registrar y sonar UNA vez por veredicto y por pieza. El primer
-            # veredicto entra con la estabilidad corta; uno distinto sobre la misma
-            # pieza (una correccion) necesita la larga. Un veredicto ya registrado
-            # no se repite aunque la escena vuelva a el.
-            veredicto = (faltantes, dudosos)
-            _primero = not veredictos_registrados
-            if ((n_pres > 0 or dudosos)
-                    and not secuencia.suprime_registro()
-                    and veredicto not in veredictos_registrados
-                    and (estable if _primero else estable_cambio)):
-                if faltantes:
-                    res = "NO_PASA"
-                elif dudosos:
-                    res = "VERIFICAR"
-                else:
-                    res = "PASA"
+            # Registrar y sonar UNA vez por veredicto y por pieza: lo decide
+            # `r["registrar"]` (estabilidad corta para el primero, larga para una
+            # correccion, nunca un veredicto ya registrado). Aqui solo se anade lo
+            # que es del modo terminal: no escribir tornillos mientras la pieza
+            # en el fixture ya no es el housing (etapa de la parte del cierre).
+            if r["registrar"] and not secuencia.suprime_registro():
+                res = r["resultado"]
                 registrar_inspeccion(res, list(faltantes), len(cfg["puntos"]),
                                      scores, presencia, umbrales, sims,
-                                     dudosos=list(dudosos), hist=hist_num)
+                                     dudosos=list(dudosos), hist=ver.hist)
                 # Mismo instante que el registro y el beep: la pieza esta quieta
                 # y ya juzgada. Se pasa `warped`, el rectificado LIMPIO, nunca la
                 # vista compuesta con circulos y banner.
@@ -1655,13 +1607,15 @@ def modo_vivo(args):
                                  umbrales, sims,
                                  gcn=getattr(secuencia, "gcn", None),
                                  estacion=platform.node())
-                if rescates_pieza:
-                    for r in sorted(rescates_pieza):
-                        _e, cz, sc = rescates_pieza[r]
-                        print(f"[Juez 2] {r}: cruz confirmada (cz {cz}) "
+                if ver.rescates:
+                    for rr in sorted(ver.rescates):
+                        _e, cz, sc = ver.rescates[rr]
+                        print(f"[Juez 2] {rr}: cruz confirmada (cz {cz}) "
                               f"-> RESCATADO a presente (puntaje {sc})")
                 beep(res == "PASA")
-                veredictos_registrados.add(veredicto)
+                # DESPUES de escribir: si el registro fallara, el veredicto no
+                # queda como hecho y se reintenta en el frame siguiente.
+                ver.marcar_registrado(r["veredicto"])
 
             if not listo:
                 banner = "Analizando..."
@@ -1671,8 +1625,7 @@ def modo_vivo(args):
                 # fixture. Es el unico re-armado valido (junto con la perdida de
                 # marcadores), porque es el unico momento en que sabemos que lo que
                 # viene no es la misma pieza vista otra vez.
-                veredictos_registrados.clear()
-                rescates_pieza.clear()
+                ver.nueva_pieza()
                 # La pieza salio del fixture aunque los marcadores del fixture
                 # sigan visibles: hay que limpiar la contaminacion de la pieza
                 # anterior. Atarlo a `frames_sin_marcadores` no basta, porque los
@@ -1728,9 +1681,9 @@ def modo_vivo(args):
             # inunda la terminal. En su lugar se ACUMULA quien rescato durante la
             # pieza y se reporta UNA vez, al registrarse el veredicto, que es el
             # unico momento en que el rescate tiene consecuencia real.
-            for r, v in _JUEZ_ACTIVO.items():
+            for rr, v in _JUEZ_ACTIVO.items():
                 if v[0] == "rescatado":
-                    rescates_pieza[r] = v
+                    ver.rescates[rr] = v
             compuesto = componer_vista(vista, cfg, presencia, estable, scores)
             cv2.imshow(VENTANA, compuesto)
 
@@ -1788,12 +1741,8 @@ def modo_vivo(args):
                             set_receta(receta_anterior)
                         else:
                             cfg, umbrales, plantillas = datos
-                            votos = {clave(p): deque(maxlen=FRAMES_VOTO) for p in cfg["puntos"]}
-                            hist_num = {clave(p): deque(maxlen=FRAMES_VOTO)
-                                        for p in cfg["puntos"]}
-                            historial_veredicto.clear()
-                            rescates_pieza.clear()
-                            veredictos_registrados.clear()
+                            ver = veredicto.Veredicto(
+                                [clave(p) for p in cfg["puntos"]])
                             print(f"[i] Proceso activo: {nueva}")
             else:
                 print("[i] Solo hay un proceso disponible.")
